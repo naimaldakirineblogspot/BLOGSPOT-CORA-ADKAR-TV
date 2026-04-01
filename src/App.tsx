@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
+import { HISN_AL_MUSLIM } from './data/azkar';
 
 // ============================================================================
 // DONNÉES ET CONSTANTES GLOBALES
@@ -809,14 +810,15 @@ const RadioView = ({ t }: { t: any }) => {
   const audioRef = useRef<HTMLAudioElement>(null);
 
   useEffect(() => {
-    fetch('https://data-rosy.vercel.app/radio.json')
+    fetch('https://mp3quran.net/api/v3/radios')
       .then(res => res.json())
       .then(data => {
         if (data && data.radios) {
           setRadios(data.radios);
           setCurrentRadio(data.radios[0]);
         }
-      });
+      })
+      .catch(err => console.error("Radio fetch error:", err));
   }, []);
 
   const togglePlay = (radio: any) => {
@@ -872,23 +874,116 @@ const RadioView = ({ t }: { t: any }) => {
 // ============================================================================
 // COMPOSANT 4 : AZKAR (INVOCATIONS)
 // ============================================================================
+const ZikrItem = ({ item }: any) => {
+  const initialCount = parseInt(item.count) || 1;
+  const [count, setCount] = useState(initialCount);
+
+  const handleDecrement = (e: React.MouseEvent) => {
+    e.stopPropagation();
+    if (count > 0) {
+      setCount(prev => prev - 1);
+      // Haptic feedback if available
+      if (window.navigator.vibrate) {
+        window.navigator.vibrate(50);
+      }
+    }
+  };
+
+  const handleReset = (e: React.MouseEvent) => {
+    e.stopPropagation();
+    setCount(initialCount);
+  };
+
+  return (
+    <div 
+      onClick={handleDecrement}
+      className={`bg-[#011a14]/80 border border-[#D4AF37]/20 rounded-2xl p-6 md:p-8 shadow-lg transition-all cursor-pointer hover:border-[#D4AF37]/50 active:bg-[#022a20] active:scale-[0.99] ${count === 0 ? 'opacity-40 grayscale scale-[0.98]' : ''}`}
+    >
+      <p className="text-[#D4AF37] font-amiri text-xl md:text-2xl leading-loose text-center mb-6 select-none" dir="rtl">{item.zekr}</p>
+      <div className="flex flex-wrap justify-between items-center gap-4 pt-4 border-t border-[#D4AF37]/10">
+        <div className="flex items-center gap-4">
+           <div 
+             className={`px-6 py-2 rounded-full font-bold text-lg transition-all flex items-center gap-3 shadow-lg ${
+               count === 0 
+               ? 'bg-gray-600 text-gray-300' 
+               : 'bg-[#D4AF37] text-black'
+             }`}
+           >
+             <span className="font-cairo text-sm md:text-base">التكرار:</span>
+             <span className="text-2xl font-mono">{count}</span>
+           </div>
+           {count !== initialCount && (
+             <button 
+               onClick={handleReset} 
+               className="p-2 bg-white/5 rounded-full text-[#D4AF37] hover:text-white hover:bg-white/10 transition-all"
+               title="إعادة التكرار"
+             >
+               <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"></path></svg>
+             </button>
+           )}
+        </div>
+        {(item.description || item.reference) && (
+          <p className="text-emerald-200/60 font-cairo text-xs md:text-sm text-right italic max-w-md select-none" dir="rtl">
+            {item.description || item.reference}
+          </p>
+        )}
+      </div>
+      {count === 0 && (
+        <div className="mt-4 text-center">
+          <span className="text-[#D4AF37] font-cairo text-sm font-bold">تم الانتهاء ✅</span>
+        </div>
+      )}
+    </div>
+  );
+};
+
 const AzkarView = ({ t }: { t: any }) => {
   const [azkar, setAzkar] = useState<any[]>([]);
   const [selectedCategory, setSelectedCategory] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
+  const [resetKey, setResetKey] = useState(0);
 
   useEffect(() => {
+    // Initialiser avec les données locales extraites du PDF (Hisn Al-Muslim)
+    setAzkar(HISN_AL_MUSLIM);
+    setLoading(false);
+
+    // Compléter avec l'API externe
     fetch('https://raw.githubusercontent.com/nawafalqari/azkar-api/56df51279ab6eb86dc2f6202c7de26c8948331c1/azkar.json')
       .then(res => res.json())
       .then(data => {
-        // Group by category
-        const categories = Object.keys(data);
-        const formatted = categories.map(cat => ({
-          category: cat,
-          items: data[cat]
-        }));
-        setAzkar(formatted);
-        setLoading(false);
+        let externalAzkar: any[] = [];
+        if (Array.isArray(data)) {
+          const grouped = data.reduce((acc: any, item: any) => {
+            if (!acc[item.category]) acc[item.category] = [];
+            acc[item.category].push(item);
+            return acc;
+          }, {});
+          externalAzkar = Object.keys(grouped).map(cat => ({
+            category: cat,
+            items: grouped[cat]
+          }));
+        } else {
+          const categories = Object.keys(data);
+          externalAzkar = categories.map(cat => ({
+            category: cat,
+            items: data[cat]
+          }));
+        }
+
+        // Fusionner en évitant les doublons de catégories et en supprimant le vide
+        setAzkar(prev => {
+          const existingCats = new Set(prev.map(a => a.category));
+          const filteredExternal = externalAzkar.filter(a => 
+            !existingCats.has(a.category) && 
+            a.items && a.items.length > 0 && 
+            a.items.some((i: any) => i.zekr && i.zekr.trim() !== "")
+          );
+          return [...prev, ...filteredExternal];
+        });
+      })
+      .catch(err => {
+        console.error("Azkar fetch error:", err);
       });
   }, []);
 
@@ -909,7 +1004,7 @@ const AzkarView = ({ t }: { t: any }) => {
               className="bg-[#011a14]/80 border border-[#D4AF37]/20 rounded-2xl p-6 text-right hover:border-[#D4AF37] transition-all group shadow-lg flex items-center justify-between"
             >
               <svg className="w-5 h-5 text-[#D4AF37] opacity-0 group-hover:opacity-100 transition-opacity" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M15 19l-7-7 7-7"></path></svg>
-              <span className="text-white font-cairo font-bold text-lg">{group.category}</span>
+              <span className="text-[#D4AF37] font-cairo font-bold text-lg w-full text-center">{group.category}</span>
             </button>
           ))}
         </div>
@@ -922,18 +1017,25 @@ const AzkarView = ({ t }: { t: any }) => {
             <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M9 5l7 7-7 7"></path></svg>
             العودة للقائمة
           </button>
-          <h3 className="text-2xl font-amiri text-white mb-4 text-right border-r-4 border-[#D4AF37] pr-4">{selectedCategory}</h3>
-          {azkar.find(g => g.category === selectedCategory)?.items.map((item: any, idx: number) => (
-            <div key={idx} className="bg-[#011a14]/80 border border-[#D4AF37]/20 rounded-2xl p-8 shadow-lg">
-              <p className="text-white font-amiri text-2xl leading-loose text-right mb-6" dir="rtl">{item.zekr}</p>
-              <div className="flex flex-wrap justify-between items-center gap-4 pt-4 border-t border-[#D4AF37]/10">
-                <div className="flex items-center gap-4">
-                   <span className="bg-[#D4AF37] text-black px-4 py-1 rounded-full font-bold text-sm">التكرار: {item.count || 1}</span>
-                </div>
-                <p className="text-emerald-200/60 font-cairo text-sm text-right italic" dir="rtl">{item.description || item.reference}</p>
-              </div>
-            </div>
-          ))}
+          <div className="flex flex-col md:flex-row justify-center items-center gap-4 mb-6">
+            <h3 className="text-2xl font-amiri text-[#D4AF37] text-center border-b-2 border-[#D4AF37] pb-2 px-8">{selectedCategory}</h3>
+            <button 
+              onClick={() => {
+                // This is a bit tricky since state is local to ZikrItem.
+                // For a simple "Reset All", we can just toggle a key to force re-render of the list.
+                setResetKey(prev => prev + 1);
+              }}
+              className="flex items-center gap-2 px-4 py-2 bg-white/5 hover:bg-white/10 border border-[#D4AF37]/30 rounded-full text-[#D4AF37] text-sm font-cairo transition-all"
+            >
+              <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"></path></svg>
+              إعادة تصفير الكل
+            </button>
+          </div>
+          <div className="grid grid-cols-1 gap-6" key={resetKey}>
+            {azkar.find(g => g.category === selectedCategory)?.items.map((item: any, idx: number) => (
+              <ZikrItem key={`${idx}-${resetKey}`} item={item} />
+            ))}
+          </div>
         </div>
       )}
     </div>
@@ -950,12 +1052,18 @@ const HadithView = ({ t }: { t: any }) => {
 
   useEffect(() => {
     setLoading(true);
-    fetch(`https://hadis-api-id.vercel.app/hadith/abu-dawud?page=${page}&limit=10`)
+    const start = (page - 1) * 10 + 1;
+    const end = page * 10;
+    fetch(`https://api.hadith.gading.dev/books/abu-daud?range=${start}-${end}`)
       .then(res => res.json())
       .then(data => {
-        if (data && data.items) {
-          setHadiths(data.items);
+        if (data && data.data && data.data.hadiths) {
+          setHadiths(data.data.hadiths);
         }
+        setLoading(false);
+      })
+      .catch(err => {
+        console.error("Hadith fetch error:", err);
         setLoading(false);
       });
   }, [page]);
